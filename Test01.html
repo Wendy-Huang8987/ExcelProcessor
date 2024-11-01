@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel System Progarm</title>
+    <style>
+      .task-container {
+        margin: 10px 0;
+      }
+      .progress-bar {
+        height: 20px;
+        background-color: lightgray;
+        position: relative;
+      }
+      .progress {
+        height: 100%;
+        background-color: steelblue;
+      }
+      .timeline-container {
+        width: 100%;
+        position: relative;
+      }
+    </style>
+</head>
+<body>
+    <h2>上傳Excel文件生成甘特圖</h2>
+  <input type="file" id="file-input" />
+  <canvas id="ganttChart" width="800" height="400"></canvas>
+
+  <!-- 引入 xlsx 套件 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <script>
+    // 當用戶選擇檔案時觸發
+    document.getElementById('file-input').addEventListener('change', handleFile);
+
+    let ganttChart;  // 用於儲存甘特圖的 Chart.js 實例
+
+    function handleFile(event) {
+      const file = event.target.files[0];
+      const reader = new FileReader();
+      
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        // 假設第一個工作表為甘特圖資料
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        
+        // 將工作表資料轉換成JSON格式
+        const tasks = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+        
+        // 創建甘特圖資料
+        const ganttData = prepareGanttData(tasks);
+        renderGanttChart(ganttData);
+      };
+      
+      reader.readAsArrayBuffer(file);
+    }
+
+    function excelDateToJSDate(excelDate) {
+        const date = new Date((excelDate - 25569) * 86400 * 1000);  // Excel基準日期
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');  // 月份+1並補零
+        const day = String(date.getDate()).padStart(2, '0');         // 日期補零
+        return `${year}-${month}-${day}`;
+    }
+
+
+    function prepareGanttData(tasks) {
+      const data = [];
+
+      // 假設第一行是標題，從第二行開始
+      for (let i = 2; i < tasks.length; i++) {
+        const [id, taskName, workDays, startDate, endDate] = tasks[i];
+        
+        const formattedStartDate = typeof startDate === 'number' ? excelDateToJSDate(startDate) : new Date(startDate);
+        const formattedEndDate = typeof endDate === 'number' ? excelDateToJSDate(endDate) : new Date(endDate);
+
+        data.push({
+          id,
+          taskName,
+          start: formattedStartDate,
+          end: formattedEndDate,
+          duration: workDays
+        });
+      }
+
+      return data;
+    }
+    function renderGanttChart(ganttData) {
+      
+      const labels = ganttData.map(item => item.taskName); // 任務名稱
+      console.log(ganttData.map(item => new Date(item.start)))
+      const datasets = [{
+        label: '工期',
+        data: ganttData.map(item => ({
+          x: [new Date(item.start), new Date(item.end)],  // 確保轉換為 Date 物件
+          y: item.taskName
+        })),
+        backgroundColor: 'rgba(75, 192, 192, 0.5)',  // 甘特圖顏色
+        borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 1,
+        borderSkipped: false,
+        borderRadius: 10,
+        barPercentage:0.5
+      }];
+      // 確定數據中的最早和最晚日期
+      const rawMinDate = new Date(Math.min(...datasets[0].data.map(item => item.x[0])));
+      const rawMaxDate = new Date(Math.max(...datasets[0].data.map(item => item.x[1])));
+
+      // 調整 minDate 為該月的 1 日，maxDate 為該月的最後一天
+      const minDate = new Date(rawMinDate.getFullYear(), rawMinDate.getMonth(), 1);
+      const maxDate = new Date(rawMaxDate.getFullYear(), rawMaxDate.getMonth() + 1, 0);
+
+      const ctx = document.getElementById('ganttChart').getContext('2d');
+
+      // 銷毀之前的圖表實例，避免重疊
+      if (ganttChart) ganttChart.destroy();
+
+      // 創建甘特圖
+      ganttChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+          indexAxis: 'y',  // 橫向顯示
+          plugins: {
+            datalabels: {
+              display: true,
+              formatter: (value, ctx) => `${ctx.dataset.data[ctx.dataIndex].y}`
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const startDate = new Date(context.raw.x[0]);
+                  const endDate = new Date(context.raw.x[1]);
+                  return `工期: ${startDate.getFullYear()}/${String(startDate.getMonth() + 1).padStart(2, '0')}/${String(startDate.getDate()).padStart(2, '0')} - ${endDate.getFullYear()}/${String(endDate.getMonth() + 1).padStart(2, '0')}/${String(endDate.getDate()).padStart(2, '0')}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              position:'top',
+              type: 'time',
+              time: {
+                unit: 'day',
+                tooltipFormat: 'yyyy/MM/dd', // 工具提示的日期格式
+                displayFormats: {
+                  month: 'yyyy/MM', // 月份顯示格式
+                  day: 'MM/dd' // 日顯示格式
+                },
+              },
+              min: minDate,
+              max: maxDate,
+              ticks: {
+                callback: function(value, index, ticks) {
+                  const date = new Date(ticks[index].value);
+                  const day = date.getDate();
+                  const month = date.getMonth() + 1; // 取得月份（1-12）
+                  const year = date.getFullYear();
+                  
+                  // 每個月的 1 日、11 日及 21 日的顯示
+                  if (day === 1 || day === 11 || day === 21) {
+                    return `${year}/${month}/${day}`;
+                  }
+
+                  // 只返回 1 日、11 日及 21 日的日期
+                  return null;
+                },
+              },
+              title: { display: true, text: '日期' }
+            },
+            y: { title: { display: true, text: '任務名稱' } }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
